@@ -245,21 +245,29 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`\n🚀 Anketci çalışıyor: http://localhost:${PORT}`);
   console.log(`   Admin Panel:      http://localhost:${PORT}/admin.html`);
-  console.log(`   Projeksiyon:      http://localhost:${PORT}/display.html`);
-  console.log(`   Oyuncu (mobil):   http://localhost:${PORT}/player.html\n`);
+  console.log(`   Projeksiyon:      http://localhost:${PORT}/display.html\n`);
 
-  // Attempt tunnel for external access
+  // Attempt tunnel for external access (required - players connect via tunnel)
+  console.log('🔗 Tunnel açılıyor...');
   try {
     const tunnel = await localtunnel({ port: PORT });
     publicUrl = tunnel.url;
-    console.log(`🌐 Dış erişim (tunnel): ${tunnel.url}`);
-    console.log(`   Oyuncular bu linki kullanacak: ${tunnel.url}/player.html\n`);
+    console.log(`✅ Tunnel hazır: ${tunnel.url}`);
+    console.log(`   Oyuncular bu linkle katılacak: ${tunnel.url}/player.html`);
+    console.log(`   QR kod bu adresi gösterecek.\n`);
     tunnel.on('close', () => {
-      console.log('Tunnel kapandı');
+      console.log('⚠️  Tunnel kapandı. Sunucuyu yeniden başlatın.');
       publicUrl = null;
     });
   } catch (e) {
-    console.log('⚠️  Tunnel açılamadı, sadece yerel ağdan erişilebilir.');
-    console.log('   Alternatif: ngrok http 3000 komutuyla tunnel açabilirsiniz.\n');
+    console.log('⚠️  localtunnel bağlanamadı. ngrok ile manuel tunnel açın:');
+    console.log('   ngrok http 3000');
+    console.log('   Ardından TUNNEL_URL ortam değişkenini ayarlayın ve yeniden başlatın.\n');
+  }
+
+  // Support manual tunnel URL (e.g. ngrok)
+  if (process.env.TUNNEL_URL) {
+    publicUrl = process.env.TUNNEL_URL.replace(/\/+$/, '');
+    console.log(`🔗 Manuel tunnel URL: ${publicUrl}\n`);
   }
 });
