@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anketci - Admin Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="admin-header">
+      <h1>Anketci Admin</h1>
+      <div style="display:flex; gap:8px;">
+        <a href="display.html" target="_blank" class="btn btn-blue btn-small">Projeksiyon Ekrani</a>
+      </div>
+    </div>
+
+    <!-- Session Control -->
+    <div class="session-bar" id="sessionBar">
+      <span class="status status-inactive" id="statusBadge">Pasif</span>
+      <span id="playerInfo">0 katilimci</span>
+      <span id="questionInfo"></span>
+      <div style="margin-left:auto; display:flex; gap:8px;">
+        <button class="btn btn-success btn-small" id="btnStartSession">Oturumu Baslat</button>
+        <button class="btn btn-primary btn-small" id="btnNextQuestion" disabled>Sonraki Soru</button>
+        <button class="btn btn-danger btn-small" id="btnEndSession" disabled>Bitir</button>
+      </div>
+    </div>
+
+    <!-- Question Form -->
+    <div class="card question-form" id="questionForm">
+      <h2>Yeni Soru Ekle</h2>
+      <div class="row">
+        <input type="text" id="qText" placeholder="Soru metni...">
+      </div>
+      <div class="row">
+        <input type="number" id="qDuration" value="30" min="5" max="120" style="max-width:120px;">
+        <span style="align-self:center; color:var(--text-muted);">saniye</span>
+      </div>
+      <h2 style="margin-top:14px;">Secenekler</h2>
+      <div class="options-list" id="optionsList">
+        <div class="option-row">
+          <input type="text" placeholder="Secenek 1">
+          <button class="remove-opt" onclick="removeOption(this)">x</button>
+        </div>
+        <div class="option-row">
+          <input type="text" placeholder="Secenek 2">
+          <button class="remove-opt" onclick="removeOption(this)">x</button>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-blue btn-small" onclick="addOption()">+ Secenek Ekle</button>
+        <button class="btn btn-success" onclick="saveQuestion()">Soruyu Kaydet</button>
+      </div>
+    </div>
+
+    <!-- Question List -->
+    <div class="card">
+      <h2>Sorular (<span id="qCount">0</span>)</h2>
+      <div id="questionList"></div>
+      <div id="emptyMsg" style="color:var(--text-muted); padding:20px; text-align:center;">
+        Henuz soru eklenmedi
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    socket.emit('register-admin');
+
+    // ─── Question CRUD ─────────────────────────────────────
+    let questions = [];
+
+    async function loadQuestions() {
+      const res = await fetch('/api/questions');
+      questions = await res.json();
+      renderQuestions();
+    }
+
+    function renderQuestions() {
+      const list = document.getElementById('questionList');
+      const empty = document.getElementById('emptyMsg');
+      document.getElementById('qCount').textContent = questions.length;
+
+      if (questions.length === 0) {
+        list.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+      list.innerHTML = questions.map((q, i) => `
+        <div class="question-item">
+          <span class="q-text"><strong>${i + 1}.</strong> ${escHtml(q.text)}</span>
+          <span class="q-meta">${q.options.length} secenek / ${q.duration}s</span>
+          <div class="q-actions">
+            <button style="background:var(--blue)" title="Duzenle" onclick="editQuestion('${q.id}')">&#9998;</button>
+            <button style="background:#c0392b" title="Sil" onclick="deleteQuestion('${q.id}')">&#10005;</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function addOption() {
+      const list = document.getElementById('optionsList');
+      const count = list.children.length + 1;
+      const row = document.createElement('div');
+      row.className = 'option-row';
+      row.innerHTML = `
+        <input type="text" placeholder="Secenek ${count}">
+        <button class="remove-opt" onclick="removeOption(this)">x</button>
+      `;
+      list.appendChild(row);
+    }
+
+    function removeOption(btn) {
+      const list = document.getElementById('optionsList');
+      if (list.children.length <= 2) return alert('En az 2 secenek olmali');
+      btn.parentElement.remove();
+    }
+
+    let editingId = null;
+
+    async function saveQuestion() {
+      const text = document.getElementById('qText').value.trim();
+      const duration = parseInt(document.getElementById('qDuration').value) || 30;
+      const optInputs = document.querySelectorAll('#optionsList input');
+      const options = Array.from(optInputs).map(i => i.value.trim()).filter(v => v);
+
+      if (!text) return alert('Soru metni girin');
+      if (options.length < 2) return alert('En az 2 secenek girin');
+
+      const method = editingId ? 'PUT' : 'POST';
+      const url = editingId ? `/api/questions/${editingId}` : '/api/questions';
+
+      await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, options, duration })
+      });
+
+      editingId = null;
+      clearForm();
+      loadQuestions();
+    }
+
+    async function deleteQuestion(id) {
+      if (!confirm('Bu soruyu silmek istediginize emin misiniz?')) return;
+      await fetch(`/api/questions/${id}`, { method: 'DELETE' });
+      loadQuestions();
+    }
+
+    function editQuestion(id) {
+      const q = questions.find(q => q.id === id);
+      if (!q) return;
+      editingId = id;
+      document.getElementById('qText').value = q.text;
+      document.getElementById('qDuration').value = q.duration;
+      const list = document.getElementById('optionsList');
+      list.innerHTML = q.options.map((opt, i) => `
+        <div class="option-row">
+          <input type="text" placeholder="Secenek ${i + 1}" value="${escHtml(opt)}">
+          <button class="remove-opt" onclick="removeOption(this)">x</button>
+        </div>
+      `).join('');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearForm() {
+      document.getElementById('qText').value = '';
+      document.getElementById('qDuration').value = '30';
+      document.getElementById('optionsList').innerHTML = `
+        <div class="option-row">
+          <input type="text" placeholder="Secenek 1">
+          <button class="remove-opt" onclick="removeOption(this)">x</button>
+        </div>
+        <div class="option-row">
+          <input type="text" placeholder="Secenek 2">
+          <button class="remove-opt" onclick="removeOption(this)">x</button>
+        </div>
+      `;
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    // ─── Session Control ───────────────────────────────────
+    document.getElementById('btnStartSession').onclick = () => socket.emit('start-session');
+    document.getElementById('btnNextQuestion').onclick = () => socket.emit('next-question');
+    document.getElementById('btnEndSession').onclick = () => {
+      if (confirm('Oturumu bitirmek istediginize emin misiniz?')) socket.emit('end-session');
+    };
+
+    socket.on('state', (state) => {
+      const badge = document.getElementById('statusBadge');
+      const btnStart = document.getElementById('btnStartSession');
+      const btnNext = document.getElementById('btnNextQuestion');
+      const btnEnd = document.getElementById('btnEndSession');
+      const pInfo = document.getElementById('playerInfo');
+      const qInfo = document.getElementById('questionInfo');
+
+      if (state.active) {
+        badge.textContent = state.phase === 'lobby' ? 'Lobi' :
+          state.phase === 'question' ? 'Soru Aktif' :
+          state.phase === 'results' ? 'Sonuclar' : 'Bitti';
+        badge.className = 'status status-active';
+        btnStart.disabled = true;
+        btnNext.disabled = state.phase === 'question';
+        btnEnd.disabled = false;
+        pInfo.textContent = `${state.playerCount} katilimci`;
+        qInfo.textContent = state.currentIndex >= 0
+          ? `Soru ${state.currentIndex + 1}/${state.totalQuestions}`
+          : '';
+      } else {
+        badge.textContent = 'Pasif';
+        badge.className = 'status status-inactive';
+        btnStart.disabled = false;
+        btnNext.disabled = true;
+        btnEnd.disabled = true;
+        pInfo.textContent = '0 katilimci';
+        qInfo.textContent = '';
+      }
+    });
+
+    socket.on('error-msg', (msg) => alert(msg));
+
+    loadQuestions();
+  </script>
+</body>
+</html>

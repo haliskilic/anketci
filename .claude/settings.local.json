@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(node server.js)",
+      "Bash(fuser -k 3000/tcp)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s http://localhost:3000/api/questions)",
+      "Bash(curl -s http://localhost:3000/admin.html)",
+      "Bash(npm list:*)",
+      "Bash(npx --yes localtunnel --port 3000)",
+      "Bash(echo \"Tunnel PID: $!\")",
+      "Bash(ssh -V)",
+      "Bash(node test-load.js)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Anketci</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Extra mobile overrides */
+    body { overflow-x: hidden; }
+    .player-page { padding: 24px 16px; }
+  </style>
+</head>
+<body>
+  <div class="player-page" id="app">
+
+    <!-- Join Form -->
+    <div id="joinView">
+      <h1 style="font-size:2rem; margin-bottom:8px;">Anketci</h1>
+      <p style="color:var(--text-muted); margin-bottom:30px;">Katilmak icin bir rumuz gir</p>
+      <div class="join-form">
+        <input type="text" id="nicknameInput" placeholder="Rumuzun..." maxlength="20" autocomplete="off">
+        <button class="btn btn-primary" id="btnJoin">Katil</button>
+      </div>
+      <p id="joinError" style="color:var(--accent); margin-top:12px; display:none;"></p>
+    </div>
+
+    <!-- Waiting -->
+    <div id="waitingView" style="display:none;">
+      <h1 style="font-size:1.8rem; margin-bottom:12px;">Hosgeldin, <span id="welcomeName"></span>!</h1>
+      <p class="player-waiting">Anket baslamayi bekliyor...</p>
+    </div>
+
+    <!-- Question -->
+    <div id="questionView" style="display:none;">
+      <div class="player-timer" id="pTimer">30</div>
+      <div class="player-question" id="pQuestion"></div>
+      <div class="player-options" id="pOptions"></div>
+      <p id="votedMsg" style="color:var(--green); font-size:1.1rem; margin-top:16px; display:none;">
+        Oyun kaydedildi!
+      </p>
+    </div>
+
+    <!-- Results -->
+    <div id="resultView" style="display:none;">
+      <h2 style="margin-bottom:20px;">Sonuclar</h2>
+      <div class="results-container" id="pResults"></div>
+      <p class="player-result" style="margin-top:16px;">Sonraki soru bekleniyor...</p>
+    </div>
+
+    <!-- Finished -->
+    <div id="finishedView" style="display:none;">
+      <div class="finished-screen">
+        <h1>Bitti!</h1>
+        <p style="color:var(--text-muted); margin-top:12px;">Katilimin icin tesekkurler</p>
+      </div>
+    </div>
+
+    <!-- Error: no session -->
+    <div id="noSessionView" style="display:none;">
+      <h2>Aktif bir oturum bulunamadi</h2>
+      <p style="color:var(--text-muted); margin-top:8px;">Lutfen yoneticiyi bekleyin</p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    const colors = ['opt-color-0','opt-color-1','opt-color-2','opt-color-3','opt-color-4','opt-color-5'];
+    const shapes = ['&#9650;','&#9670;','&#9679;','&#9632;','&#9733;','&#9830;'];
+
+    let joined = false;
+    let voted = false;
+    let nickname = '';
+
+    const allViews = ['joinView','waitingView','questionView','resultView','finishedView','noSessionView'];
+    function showView(name) {
+      allViews.forEach(v => document.getElementById(v).style.display = 'none');
+      document.getElementById(name).style.display = 'block';
+    }
+
+    // Join
+    document.getElementById('btnJoin').onclick = () => tryJoin();
+    document.getElementById('nicknameInput').onkeydown = (e) => {
+      if (e.key === 'Enter') tryJoin();
+    };
+
+    function tryJoin() {
+      const input = document.getElementById('nicknameInput');
+      const name = input.value.trim();
+      if (!name) return;
+
+      document.getElementById('btnJoin').disabled = true;
+      socket.emit('join', name, (response) => {
+        document.getElementById('btnJoin').disabled = false;
+        if (response.error) {
+          document.getElementById('joinError').textContent = response.error;
+          document.getElementById('joinError').style.display = 'block';
+          return;
+        }
+        joined = true;
+        nickname = name;
+        document.getElementById('welcomeName').textContent = name;
+        showView('waitingView');
+      });
+    }
+
+    // State updates
+    socket.on('state', (state) => {
+      if (!joined) {
+        if (!state.active || state.phase !== 'lobby') {
+          showView('noSessionView');
+        }
+        return;
+      }
+
+      if (!state.active) {
+        showView('noSessionView');
+        return;
+      }
+
+      if (state.phase === 'lobby') {
+        showView('waitingView');
+      }
+
+      else if (state.phase === 'question') {
+        voted = false;
+        showView('questionView');
+        document.getElementById('pQuestion').textContent = state.question.text;
+        document.getElementById('votedMsg').style.display = 'none';
+        document.getElementById('pOptions').innerHTML =
+          state.question.options.map((opt, i) => `
+            <button class="player-option ${colors[i % colors.length]} fade-in"
+                    onclick="castVote(${i}, this)">
+              ${shapes[i % shapes.length]} ${escHtml(opt)}
+            </button>
+          `).join('');
+      }
+
+      else if (state.phase === 'results') {
+        showView('resultView');
+        if (state.results) {
+          document.getElementById('pResults').innerHTML =
+            state.results.map((r, i) => `
+              <div class="result-bar fade-in">
+                <div class="result-label">
+                  <span>${shapes[i % shapes.length]} ${escHtml(r.option)}</span>
+                  <span>${r.percent}%</span>
+                </div>
+                <div class="result-track">
+                  <div class="result-fill ${colors[i % colors.length]}"
+                       style="width: ${r.percent}%;"></div>
+                </div>
+              </div>
+            `).join('');
+        }
+      }
+
+      else if (state.phase === 'finished') {
+        showView('finishedView');
+      }
+    });
+
+    socket.on('timer', (seconds) => {
+      const el = document.getElementById('pTimer');
+      if (el) {
+        el.textContent = seconds;
+        el.style.color = seconds <= 5 ? 'var(--accent)' : 'var(--yellow)';
+      }
+    });
+
+    function castVote(index, btn) {
+      if (voted) return;
+      voted = true;
+      socket.emit('vote', index);
+
+      // Disable all options, highlight selected
+      document.querySelectorAll('.player-option').forEach(b => {
+        b.disabled = true;
+        b.classList.remove('selected');
+      });
+      btn.classList.add('selected');
+      document.getElementById('votedMsg').style.display = 'block';
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>

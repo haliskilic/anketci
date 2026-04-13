@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anketci - Projeksiyon</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="display-page" id="app">
+    <!-- Lobby / QR -->
+    <div id="lobbyView" style="display:none;">
+      <h1>Anketci</h1>
+      <p style="font-size:1.3rem; color:var(--text-muted); margin-bottom:24px;">QR kodu taratarak katil!</p>
+      <div class="qr-section">
+        <img id="qrImage" alt="QR Code">
+        <div class="url-text" id="qrUrl"></div>
+      </div>
+      <div class="player-count" id="lobbyCount">0</div>
+      <p style="color:var(--text-muted); margin-bottom:16px;">katilimci</p>
+      <div class="player-names" id="lobbyPlayers"></div>
+    </div>
+
+    <!-- Question -->
+    <div id="questionView" style="display:none;">
+      <div class="timer-display" id="timerText">30</div>
+      <div class="display-question" id="questionText"></div>
+      <div class="display-options" id="optionsGrid"></div>
+      <div class="vote-counter" id="voteCounter">0 oy kullanildi</div>
+    </div>
+
+    <!-- Results -->
+    <div id="resultsView" style="display:none;">
+      <h1 style="margin-bottom:30px;">Sonuclar</h1>
+      <div class="results-container" id="resultsContainer"></div>
+      <div class="vote-counter" id="resultsVoteCount" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- Finished -->
+    <div id="finishedView" style="display:none;">
+      <div class="finished-screen">
+        <h1 style="font-size:3rem; margin-bottom:16px;">Anket Tamamlandi!</h1>
+        <p style="color:var(--text-muted); font-size:1.3rem;">Katiliminiz icin tesekkurler</p>
+      </div>
+    </div>
+
+    <!-- Inactive -->
+    <div id="inactiveView">
+      <h1 style="font-size:2.5rem;">Anketci</h1>
+      <p style="color:var(--text-muted); font-size:1.2rem; margin-top:12px;">Oturum baslatilmayi bekliyor...</p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    socket.emit('register-display');
+
+    const colors = ['opt-color-0','opt-color-1','opt-color-2','opt-color-3','opt-color-4','opt-color-5'];
+    const colorHex = ['#e94560','#3498db','#e67e22','#533483','#2ecc71','#8e44ad'];
+    const shapes = ['&#9650;','&#9670;','&#9679;','&#9632;','&#9733;','&#9830;'];
+
+    const views = {
+      lobby: document.getElementById('lobbyView'),
+      question: document.getElementById('questionView'),
+      results: document.getElementById('resultsView'),
+      finished: document.getElementById('finishedView'),
+      inactive: document.getElementById('inactiveView')
+    };
+
+    function showView(name) {
+      Object.values(views).forEach(v => v.style.display = 'none');
+      if (views[name]) views[name].style.display = 'block';
+    }
+
+    // Load QR
+    async function loadQR() {
+      try {
+        const res = await fetch('/api/qr');
+        const data = await res.json();
+        document.getElementById('qrImage').src = data.qr;
+        document.getElementById('qrUrl').textContent = data.url;
+      } catch (e) {}
+    }
+
+    socket.on('state', (state) => {
+      if (!state.active) {
+        showView('inactive');
+        return;
+      }
+
+      if (state.phase === 'lobby') {
+        showView('lobby');
+        loadQR();
+        document.getElementById('lobbyCount').textContent = state.playerCount;
+        document.getElementById('lobbyPlayers').innerHTML =
+          state.players.map(n => `<span class="player-tag fade-in">${escHtml(n)}</span>`).join('');
+      }
+
+      else if (state.phase === 'question') {
+        showView('question');
+        document.getElementById('questionText').textContent = state.question.text;
+        document.getElementById('optionsGrid').innerHTML =
+          state.question.options.map((opt, i) => `
+            <div class="display-option ${colors[i % colors.length]} fade-in">
+              <span>${shapes[i % shapes.length]}</span> ${escHtml(opt)}
+            </div>
+          `).join('');
+        document.getElementById('voteCounter').textContent = `${state.voteCount} oy kullanildi`;
+      }
+
+      else if (state.phase === 'results') {
+        showView('results');
+        if (state.results) {
+          const maxPercent = Math.max(...state.results.map(r => r.percent), 1);
+          document.getElementById('resultsContainer').innerHTML =
+            state.results.map((r, i) => `
+              <div class="result-bar fade-in">
+                <div class="result-label">
+                  <span>${shapes[i % shapes.length]} ${escHtml(r.option)}</span>
+                  <span>${r.percent}% (${r.count})</span>
+                </div>
+                <div class="result-track">
+                  <div class="result-fill ${colors[i % colors.length]}"
+                       style="width: ${r.percent}%;">
+                  </div>
+                </div>
+              </div>
+            `).join('');
+          // Animate bars
+          requestAnimationFrame(() => {
+            document.querySelectorAll('.result-fill').forEach(el => {
+              el.style.width = el.style.width; // trigger reflow
+            });
+          });
+          document.getElementById('resultsVoteCount').textContent =
+            `Toplam ${state.voteCount} oy`;
+        }
+      }
+
+      else if (state.phase === 'finished') {
+        showView('finished');
+      }
+    });
+
+    socket.on('timer', (seconds) => {
+      const el = document.getElementById('timerText');
+      el.textContent = seconds;
+      el.className = seconds <= 5 ? 'timer-display urgent' : 'timer-display';
+    });
+
+    socket.on('vote-count', (count) => {
+      const el = document.getElementById('voteCounter');
+      if (el) el.textContent = `${count} oy kullanildi`;
+    });
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
