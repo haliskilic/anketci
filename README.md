@@ -71,7 +71,213 @@ Bir sunucu/egitimci olarak:
 | **qrcode** | QR kod olusturma |
 | **localtunnel** | Otomatik tunnel (port acmadan dis erisim) |
 
-## Kurulum (Windows)
+## Kurulum (Ubuntu - Sunucu / Internet Uzerinden Hizmet)
+
+Bu bolum, Anketci'yi bir Ubuntu sunucusunda (VPS, bulut sunucu vb.) kurup internetten hizmet verecek sekilde yapilandirmayi anlatir. Tunnel yerine dogrudan domain ve SSL ile calisir.
+
+### Gereksinimler
+
+- Ubuntu 20.04 / 22.04 / 24.04 (veya turevleri)
+- Root veya sudo yetkili kullanici
+- Bir domain adi (ornegin `anketci.orneksite.com`) — sunucunuzun IP adresine yonlendirilmis olmali
+- Acik portlar: 80 (HTTP) ve 443 (HTTPS)
+
+### 1. Sistem Guncellemesi ve Temel Paketler
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl git build-essential
+```
+
+### 2. Node.js Kurulumu
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Dogrulayin:
+
+```bash
+node --version
+npm --version
+```
+
+### 3. Projeyi Indirme ve Kurma
+
+```bash
+cd /opt
+sudo git clone https://github.com/haliskilic/anketci.git
+sudo chown -R $USER:$USER /opt/anketci
+cd /opt/anketci
+npm install --production
+```
+
+### 4. Ortam Degiskenleri
+
+Tunnel kullanmak yerine kendi domain'inizi `TUNNEL_URL` olarak ayarlayin. Boylece QR kodlar ve katilim linkleri dogrudan sizin adresinizi gosterecektir:
+
+```bash
+export PORT=3000
+export TUNNEL_URL=https://anketci.orneksite.com
+```
+
+### 5. systemd ile Servis Olarak Calistirma
+
+Sunucu yeniden baslatildiginda Anketci otomatik baslasin:
+
+```bash
+sudo tee /etc/systemd/system/anketci.service > /dev/null <<'EOF'
+[Unit]
+Description=Anketci - Canli Anket Uygulamasi
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/anketci
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+Environment=PORT=3000
+Environment=TUNNEL_URL=https://anketci.orneksite.com
+# Node.js uygulama ortami
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+> **Onemli:** `TUNNEL_URL` degerini kendi domain adresinizle degistirin.
+
+Dosya izinlerini ayarlayin ve servisi baslatin:
+
+```bash
+sudo chown -R www-data:www-data /opt/anketci
+sudo systemctl daemon-reload
+sudo systemctl enable anketci
+sudo systemctl start anketci
+```
+
+Durumu kontrol edin:
+
+```bash
+sudo systemctl status anketci
+```
+
+Loglari izlemek icin:
+
+```bash
+sudo journalctl -u anketci -f
+```
+
+### 6. Nginx Reverse Proxy Kurulumu
+
+Nginx, disaridan gelen HTTP/HTTPS isteklerini Node.js uygulamasina yonlendirir ve WebSocket (Socket.IO) baglantisini destekler:
+
+```bash
+sudo apt install -y nginx
+```
+
+Site yapilandirmasi olusturun:
+
+```bash
+sudo tee /etc/nginx/sites-available/anketci > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name anketci.orneksite.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        # WebSocket destegi (Socket.IO icin gerekli)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket zaman asimi
+        proxy_read_timeout 86400;
+    }
+}
+EOF
+```
+
+> **Onemli:** `server_name` degerini kendi domain adresinizle degistirin.
+
+Siteyi etkinlestirin ve Nginx'i yeniden baslatin:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/anketci /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### 7. SSL Sertifikasi (Let's Encrypt - Ucretsiz HTTPS)
+
+Katilimcilar internet uzerinden baglanacagi icin HTTPS zorunludur. Let's Encrypt ile ucretsiz SSL sertifikasi alin:
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d anketci.orneksite.com
+```
+
+Certbot sizden e-posta adresi isteyecek ve kullanim kosullarini kabul etmenizi bekleyecek. Islem tamamlandiginda Nginx yapilandirmasi otomatik olarak HTTPS'e guncellenir.
+
+Sertifika otomatik yenilemeyi test edin:
+
+```bash
+sudo certbot renew --dry-run
+```
+
+### 8. Guvenlik Duvari (UFW)
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+sudo ufw status
+```
+
+### 9. Dogrulama
+
+Kurulum tamamlandiginda:
+
+1. Tarayicidan `https://anketci.orneksite.com/admin.html` adresine gidin — Admin paneli acilmali
+2. `https://anketci.orneksite.com/display.html` — Projeksiyon ekrani
+3. Oturumu baslattiginizda QR kod `https://anketci.orneksite.com/player.html` adresini gosterecek
+4. Katilimcilar internet uzerinden dogrudan bu adrese erisebilir — tunnel gerekmez
+
+### Faydali Komutlar
+
+```bash
+# Servisi yeniden baslat
+sudo systemctl restart anketci
+
+# Servisi durdur
+sudo systemctl stop anketci
+
+# Loglari goruntule
+sudo journalctl -u anketci -n 50
+
+# Nginx yapilandirmasini test et
+sudo nginx -t
+
+# SSL sertifika durumunu kontrol et
+sudo certbot certificates
+```
+
+---
+
+## Kurulum (Windows - Yerel Kullanim / Tunnel ile)
+
+Bu bolum, Windows uzerinde yerel olarak calistirip tunnel ile dis erisim saglamayi anlatir.
 
 ### 1. Node.js Kurulumu
 
