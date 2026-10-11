@@ -2,6 +2,8 @@
   "name": "anketci",
   "version": "1.0.0",
   "description": "Kahoot benzeri canlı anket uygulaması",
+  "author": "Halis KILIÇ <mail@haliskilic.com.tr>",
+  "license": "AGPL-3.0-only",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
